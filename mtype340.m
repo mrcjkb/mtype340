@@ -53,6 +53,28 @@ classdef mtype340 < handle
         %                 [No dead-band temperatrue difference is set in this case]
         aux;
         zs; % Kx1 vector with the relative positions of up to Nmax temperature sensors (NaN for sensors that are not used)
+        % Relative heights of the inputs of double port 1..N (Nx1-vector, zdi(i) <= 1)
+        % N is the number of double ports
+        zdi;
+        % Relative heights of the outputs of double port 1..N (Nx1-vector, zdo(i) <= 1)
+        % N is the number of double ports
+        zdo;
+        % Nx1-vector according to zdi & zdo to indicate stratified charging and non-stratified charging.
+        % scdp(i) == 1 for stratified charging of the double port dp_i and
+        % scdp(i) == 0 for non-stratified charging with fixed return flow positions.
+        % If no double ports are used, set scdp(1:4) to NaN.
+        scdp;
+        % 4x1-vector with the relative heights of the HX-inputs of the HX 1..4 [0 <= zhi(i) <= 1]
+        %       --> If one of the 4 possible HX is not used, set the
+        %           respective positions zhi(i) and zho(i) to a negative value
+        zhi;
+        % 4x1-vector with the relative heights of the HX-outputs of HX 1..4 [0 <= zho(i) <= 1]
+        %       --> If one of the 4 possible HX is not used, set the
+        %           respective positions zhi(i) and zho(i) to a negative value
+        zho;
+        % 4x1-vector with the volumina [m³] of the four HX
+        % (zero for unused HX)
+        Vh;
     end
     properties (SetAccess = 'protected')
         Tho; % 4x1 vector with the temperatures of the heat exchangers [°C]
@@ -81,28 +103,6 @@ classdef mtype340 < handle
         UA_o; % Heat loss rate at the top of the storage tank [W/K]
         UA_h; % Heat loss rates between storage tank and heat exchangers [W/K] (4x1-vector)
         Nmax; % Number of volume segments in the storage tank
-        % Relative heights of the inputs of double port 1..N (Nx1-vector, zdi(i) <= 1)
-        % N is the number of double ports
-        zdi;
-        % Relative heights of the outputs of double port 1..N (Nx1-vector, zdo(i) <= 1)
-        % N is the number of double ports
-        zdo;
-        % Nx1-vector according to zdi & zdo to indicate stratified charging and non-stratified charging.
-        % scdp(i) == 1 for stratified charging of the double port dp_i and
-        % scdp(i) == 0 for non-stratified charging with fixed return flow positions.
-        % If no double ports are used, set scdp(1:4) to NaN.
-        scdp;
-        % 4x1-vector with the relative heights of the HX-inputs of the HX 1..4 [0 <= zhi(i) <= 1]
-        %       --> If one of the 4 possible HX is not used, set the
-        %           respective positions zhi(i) and zho(i) to a negative value
-        zhi;
-        % 4x1-vector with the relative heights of the HX-outputs of HX 1..4 [0 <= zho(i) <= 1]
-        %       --> If one of the 4 possible HX is not used, set the
-        %           respective positions zhi(i) and zho(i) to a negative value
-        zho;
-        % 4x1-vector with the volumina [m³] of the four HX
-        % (zero for unused HX)
-        Vh;
         % Time step size of the simulation [s]
         % e. g. 60 for a time step size of 1 minute
         delt;
@@ -227,20 +227,19 @@ classdef mtype340 < handle
             if any([zdi > 1; zdo > 1; zdi < 0; zdo < 0])
                 error('zdi and zdo must be between 0..1')
             end
-            chk = zhi == 0 + zho == 0;
+            chk = zhi < 0 + zho < 0;
             if any(chk < 2 & chk > 0)
                 error('zhi and zho do not match')
             end
             ty.zhi = zhi; ty.zho = zho;
             ty.Hs = Hs; ty.Vs = Vs; ty.Aq = Vs./Hs;
-            ty.Nmax = Nmax;
             ty.UA_a = UA_a; ty.UA_u = UA_u; ty.UA_o = UA_o; ty.UA_h = UA_h;
             ty.aux = aux; ty.zhi = zhi; ty.zho = zho;
             ty.Vh = Vh; ty.zs = zs; ty.delt = delt;
             % Additional properties
-            ty.ksiak = zeros(Nmax,1);
-            ty.ksiav = ksiak;
-            ty.auxpos = int32(ksiak);
+            ty.ksiak = zeros(ty.Nmax,1);
+            ty.ksiav = ty.ksiak;
+            ty.auxpos = int32(ty.ksiak);
             % initialization of hxdat & storedat, etc.
             ty.hxdat.nh14 = [];
             ty.hxdat.nh23 = [];
