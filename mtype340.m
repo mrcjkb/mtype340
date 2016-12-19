@@ -246,7 +246,511 @@ classdef mtype340 < handle
         function ty = simulate(ty, Tdi, mdotd, Thi, mdoth, Tamb, Paux)
             % SIMULATE: Pass simulation variables to mtype340 object and update
             
+            irel_bndr = linspace(0,1,ty.Nmax+1); % relative heights of zone boundaries i
+            % Auxiliary heater
+            switch ty.aux.var
+                case 0 % Constant power according to controller
+                    % Determination of node that contains AUX
+                    ty.auxpos = find(irel_bndr > ty.aux.pos,1)-1;
+                    ty.ksiak(ty.auxpos) = 1; ty.ksiav(ty.auxpos) = 0;
+                case 1 % variable AUX power
+                    ty.auxpos = find(irel_bndr > ty.aux.pos,1)-1;
+                    ty.ksiav(ty.auxpos) = 1; ty.ksiak(ty.auxpos) = 0;
+                    ty.aux.T = nan;
+                case 2 % no auxiliary heater
+                    Paux = 0;
+                    ty.aux.T = nan;
+                    ty.auxpos = 1; % to avoid indexing errors
+            end
+            % Mathematical description [Eq. 4.1 in TRNSYS doc] -
+            % pre-initialisation
+            % Conversion of input-positions for the case of stratified DP dis/charging
+            zdni = nan(size(ty.zdi));
+            zdno = zdni;
+            ks = (1:ty.Nmax)';
+            msink = zeros(ty.Nmax,length(mdotd)); %log. vector for active mdot in each node
+            for i = 1:length(ty.scdp)
+                zdni(i) = find(irel_bndr > ty.zdi(i),1)-1;
+                zdno(i) = find(irel_bndr > ty.zdo(i),1)-1;
+                % find new virtual input node
+                if ty.scdp(i) && mdotd(i) ~= 0
+                    dTd = ty.Tz - Tdi(i);
+                    chk = find(dTd > 0);
+                    if ~isempty(chk)
+                        zdni(i) = chk(1);
+                    else
+                        zdni(i) = ty.Nmax;
+                    end
+                end
+                if zdni(i) < zdno(i)
+                    mdotd(i) = abs(mdotd(i)); % upward flow direction
+                    msink(:,i) = ks<=zdno(i) & ks>=zdni(i);
+                else
+                    mdotd(i) = 0-abs(mdotd(i)); % downward flow direction
+                    msink(:,i) = ks>=zdno(i) & ks<=zdni(i);
+                end
+            end
+            msink = logical(msink);
+            [tf,idx] = ismember(ks,zdni);
+            %______________logical switches ksi_____________________________________________
+            % ksi1 = 1 for mdot_dp > 0, otherwise ksi1 = 0
+            ksi1 = ones(size(mdotd)); ksi1(mdotd<=0) = 0;
+            % ksi2 = 1 for mdot_dp < 0, otherwise ksi2 = 0
+            ksi2 = ones(size(mdotd)); ksi2(mdotd>=0) = 0;
+            % ksi3 = 1 für zones i, that are in contact with HX 1 oder 4 sind,
+            % otherwise ksi3 = 0
+            if ty.ini
+                ty.hxdat.nh14 = [];
+                ty.hxdat.nh23 = [];
+            end
+            if ty.ini || ty.hxdat.nh14 ~= length(find([ty.zho(1),ty.zho(4)]>=0)) || ty.hxdat.nh23 ~= length(find([ty.zho(2),ty.zho(3)]>=0))
+                % Find out if hx1 & hx4 are used alone, together or not at all
+                numhx14 = length(find([ty.zho(1),ty.zho(4)]>=0));
+                % Determine parallel temperature layers of HX 1 & 4
+                Th14 = zeros(size(ty.Tz));
+                switch numhx14
+                    case 0 % neither are used
+                        mm1 = []; mm4 = []; %Indizes für die entsprechenden Nodes
+                        ksi3 = zeros(1,Nmax);
+                        nh14 = 1; %wird 1 gesetzt, um Teilen durch Null zu vermeiden
+                        Th14 = Tz;
+                        h1nodes = []; h4nodes = [];
+                    case 1
+                        ksi3 = zeros(1,Nmax);
+                        if zho(1) >= 0 %falls nur WT1 verwendet wird
+                            mm4 = [];
+                            set = [find(irel_bndr > zho(1),1)-1; find(irel_bndr > zhi(1),1)-1];
+                            %Unterscheidung zw. B- und Entladen des Speichers
+                            if zho(1) > zhi(1) %Entladen
+                                mm1 = set(2):set(1); l = length(mm1);
+                                h1nodes = linspace(Thi(1),Tz(set(1))-5,l+2);
+                            else %Beladen
+                                mm1 = set(1):set(2); l = length(mm1);
+                                h1nodes = linspace(Tz(set(1))+5,Thi(1),l+2);
+                            end
+                            %Einsetzen der Temperatur des WT1 (zun. idealisierte Annahme des Verlaufs)
+                            Th14(mm1) = h1nodes(2:end-1);
+                            Th14(mm1) = repmat(Thi(1),size(mm1)); %Initialisierung mit konstanter hx-Temperatur
+                            ksi3(mm1) = 1;
+                            h4nodes = [];
+                        else %falls nur WT4 verwendet wird
+                            mm1 = [];
+                            set = [find(irel_bndr > zho(4),1)-1; find(irel_bndr > zhi(4),1)-1];
+                            if zho(4) > zhi(4) %Entladen
+                                mm4 = set(2):set(1); l = length(mm4);
+                                h4nodes = linspace(Thi(4),Tz(set(1))-5,l+2);
+                            else %Beladen
+                                mm4 = set(1):set(2); l = length(mm4);
+                                h4nodes = linspace(Tz(set(1))+5,Thi(4),l+2);
+                            end
+                            Th14(mm4) = h4nodes(2:end-1);
+                            Th14(mm4) = repmat(Thi(4),size(mm4));
+                            ksi3(mm4) = 1;
+                            h1nodes = [];
+                        end
+                        nh14 = length(find(ksi3)); %Anzahl Nodes, die von WT1 & WT4 besetzt sind;
+                        %ksi3 = repmat(ksi3,length(time),1);
+                    case 2 %falls WT1 und WT4 beide verwendet werden
+                        set = [find(irel_bndr > zho(1),1)-1; find(irel_bndr > zhi(1),1)-1;...
+                            find(irel_bndr > zho(4),1)-1; find(irel_bndr > zhi(4),1)-1];
+                        %Einsetzen der Temperaturen der WT 1 & 4 entsprechend ihrer Nodes (zunächst idealisierte Annahme des Verlaufs)
+                        %Unterscheidung zwischen Be- und Entladen des Speichers
+                        if zho(1) > zhi(1) %Entladen WT1
+                            mm1 = set(2):set(1); l = length(mm1);
+                            h1nodes = linspace(Thi(1),Tz(set(1))-5,l+2);
+                        else %Beladen WT1
+                            mm1 = set(1):set(2); l = length(mm1);
+                            h1nodes = linspace(Tz(set(1))+5,Thi(1),l+2);
+                        end
+                        Th14(mm1) = h1nodes(2:end-1);
+                        Th14(mm1) = repmat(Thi(1),size(mm1));
+                        if zho(4) > zhi(4) %Entladen WT4
+                            mm4 = set(4):set(3); l = length(mm4);
+                            h4nodes = linspace(Thi(4),Tz(set(3))-5,l+2);
+                        else %Beladen WT4
+                            mm4 = set(3):set(4); l = length(mm4);
+                            h4nodes = linspace(Tz(set(3))+5,Thi(4),l+2);
+                        end
+                        Th14(mm4) =  h4nodes(2:end-1);
+                        Th14(mm4) = repmat(Thi(4),size(mm4));
+                        set = [mm1,mm4];
+                        ksi3 = zeros(1,Nmax); ksi3(set) = 1;
+                        nh14 = length(find(ksi3)); %Anzahl Nodes, die von WT1 & WT4 besetzt sind;
+                        %ksi3 = repmat(ksi3,length(time),1);
+                end
+                %ksi4 = 1 für Zonen i, die in Kontakt mit Wärmetauscher 2 oder 3 sind,
+                %ansonsten ksi4 = 0
+                %Ermittlung, ob hx1, hx4, alleine, zusammen oder gar nicht genutzt werden:
+                numhx23 = length(find([zho(2),zho(3)]>=0));
+                Th23 = zeros(size(Tz)); %Initialisierung der entspr. Temperaturschichten der WT 2 & 3
+                switch numhx23
+                    case 0 %falls WT2 und WT3 beide nicht verwendet werden
+                        mm2 = []; mm3 = [];
+                        ksi4 = zeros(1,Nmax);
+                        nh23 = 1; %wird 1 gesetzt, um Teilen durch Null zu vermeiden
+                        Th23 = Tz;
+                        h2nodes = []; h3nodes = [];
+                    case 1
+                        ksi4 = zeros(1,Nmax);
+                        if zho(2) >= 0 %falls nur WT2 verwendet wird
+                            mm3 = [];
+                            set = [find(irel_bndr > zho(2),1)-1; find(irel_bndr > zhi(2),1)-1];
+                            if zho(2) > zhi(2) %Entladen
+                                mm2 = set(2):set(1); l = length(mm2);
+                                h2nodes = linspace(Thi(2),Tz(set(1))-5,l+2);
+                            else %Beladen
+                                mm2 = set(1):set(2); l = length(mm2);
+                                h2nodes = linspace(Tz(set(1))+5,Thi(2),l+2);
+                            end
+                            %Einsetzen der Temperatur des WT2 (zun. idealisierte Annahme des Verlaufs)
+                            Th23(mm2) = h2nodes(2:end-1);
+                            Th23(mm2) = repmat(Thi(2),size(mm2));
+                            ksi4(mm2) = 1;
+                            h3nodes = [];
+                        else %falls nur WT3 verwendet wird
+                            mm2 = [];
+                            set = [find(irel_bndr > zho(3),1)-1; find(irel_bndr > zhi(3),1)-1];
+                            if zho(3) > zhi(3) %Entladen
+                                mm3 = set(2):set(1); l = length(mm3);
+                                h3nodes = linspace(Thi(3),Tz(set(1))-5,l+2);
+                            else %Beladen
+                                mm3 = set(1):set(2); l = length(mm3);
+                                h3nodes = linspace(Tz(set(1))+5,Thi(3),l+2);
+                            end
+                            %Einsetzen der Temperatur des WT3 (zun. idealisierte Annahme des Verlaufs)
+                            Th23(mm3) = h3nodes(2:end-1);
+                            Th23(mm3) = repmat(Thi(3),size(mm3));
+                            ksi4(mm3) = 1;
+                            h2nodes = [];
+                        end
+                        nh23 = length(find(ksi4)); %Anzahl Nodes, die von WT2 & WT3 besetzt sind
+                        %ksi4 = repmat(ksi4,length(time),1);
+                    case 2 %falls WT2 und WT3 beide verwendet werden
+                        set = [find(irel_bndr > zho(2),1)-1; find(irel_bndr > zhi(2),1)-1;...
+                            find(irel_bndr > zho(3),1)-1; find(irel_bndr > zhi(3),1)-1];
+                        if zho(2) > zhi(2) %Entladen WT2
+                            mm2 = set(2):set(1); l = length(mm2);
+                            h2nodes = linspace(Thi(2),Tz(set(1))-5,l+2);
+                        else %Beladen WT2
+                            mm2 = set(1):set(2); l = length(mm2);
+                            h2nodes = linspace(Tz(set(1))+5,Thi(2),l+2);
+                        end
+                        Th23(mm2) = h2nodes(2:end-1);
+                        Th23(mm2) = repmat(Thi(2),size(mm2));
+                        if zho(3) > zhi(3) %Entladen WT3
+                            mm3 = set(4):set(3); l = length(mm3);
+                            h3nodes = linspace(Thi(3),Tz(set(3))-5,l+2);
+                        else %Beladen WT3
+                            mm3 = set(3):set(4); l = length(mm3);
+                            h3nodes = linspace(Tz(set(3))+5,Thi(3),l+2);
+                        end
+                        Th23(mm3) =  h3nodes(2:end-1);
+                        Th23(mm3) = repmat(Thi(3),size(mm3));
+                        set = [mm2,mm3];
+                        ksi4 = zeros(1,Nmax); ksi4(set) = 1;
+                        nh23 = length(find(ksi4));
+                        
+                end
+                ksi3 = ksi3'; ksi4 = ksi4';
+                hxdat.ksi3 = ksi3; hxdat.ksi4 = ksi4;
+                hxdat.mm1 = mm1; hxdat.mm2 = mm2; hxdat.mm3 = mm3; hxdat.mm4 = mm4;
+                hxdat.nh14 = nh14; hxdat.nh23 = nh23;
+                hxdat.h1nodes = h1nodes; hxdat.h2nodes = h2nodes; hxdat.h3nodes = h3nodes; hxdat.h4nodes = h4nodes;
+            else
+                ksi3 = hxdat.ksi3; ksi4 = hxdat.ksi4;
+                mm1 = hxdat.mm1; mm2 = hxdat.mm2; mm3 = hxdat.mm3; mm4 = hxdat.mm4;
+                nh14 = hxdat.nh14; nh23 = hxdat.nh23;
+                h1nodes = hxdat.h1nodes; h2nodes = hxdat.h2nodes; h3nodes = hxdat.h3nodes; h4nodes = hxdat.h4nodes;
+            end
             
+            
+            %% Feststellen eines Starts der Wärmetauscher
+            %Die Massenträgheit beim Start eines WT wird im Solver berücksichtigt, da
+            %diese von der Anzahl interner Zeitschritte abhängt.
+            %In diesem Abschnitt wird ein Anfahren eines der 4 WT erkannt
+            if ini
+                hxdat.mdoth = mdoth;
+                hxdat.mdoth(isnan(hxdat.mdoth)) = 0;
+                hxini = ones(4,1);
+            else
+                hxini = zeros(4,1);
+                for i = 1:4
+                    if hxdat.mdoth(i) == 0 && mdoth(i) ~= 0
+                        hxini(i) = 1;
+                    end
+                end
+                hxdat.mdoth = mdoth;
+                hxdat.mdoth(isnan(hxdat.mdoth)) = 0;
+            end
+            
+            
+            %____Ermittlung des Vektors ndzk__________________________________________________________
+            %ndzk: Vektor mit Anzahl Nodes in der zum jew. Node gehörigen Zone k (k = 1...4)
+            %{
+ndz = Nmax*dz;
+%Ermittlung der Anzahl Zonen konstanter Wärmeverlustrate
+for i = 1:4
+    if sum(dz(1:i)) == 1
+        numz = i;
+        break
+    end
+end
+switch numz %problem: Generates 12x1 matrix with example data
+    case 1 %Fall 1: Es gibt nur 1 Zone --> Zone z1 besetzt alle Nmax Nodes
+        ndzk = repmat(Nmax,1,Nmax)'; %Anzahl zonen für die WVR auf Speicherschichten skaliert
+        UAs_ak = repmat(UA_a(1),1,Nmax)'; %WVR der entspr. Zonen auf Speicherschichten skaliert
+    case 2 %Fall 2: Es gibt 2 Zonen --> Nodes werden zw. z1 & z2 aufgeteilt
+        ndzk = [repmat(ndz(1),1,uint8(ndz(1))), repmat(ndz(2),1,uint8(ndz(2)))]';
+        UAs_ak = [repmat(UA_a(1),1,uint8(ndz(1))); repmat(UA_a(2),1,uint8(ndz(2)))]';
+    case 3 %Fall 3: Es gibt 3 Zonen
+        ndzk = [repmat(ndz(1),1,uint8(ndz(1))), repmat(ndz(2),1,uint8(ndz(2))), repmat(ndz(3),1,uint8(ndz(3)))]';
+        UAs_ak = [repmat(UA_a(1),1,uint8(ndz(1))), repmat(UA_a(2),1,uint8(ndz(2))), repmat(UA_a(3),1,uint8(ndz(3)))]';
+    case 4 %Fall 4: Es gibt 4 Zonen
+        ndzk = [repmat(ndz(1),1,uint8(ndz(1))), repmat(ndz(2),1,uint8(ndz(2))), repmat(ndz(3),1,uint8(ndz(3))), repmat(ndz(4),1,uint8(ndz(4)))]';
+        UAs_ak = [repmat(UA_a(1),1,uint8(ndz(1))), repmat(UA_a(2),1,uint8(ndz(2))), repmat(UA_a(3),1,uint8(ndz(3))), repmat(UA_a(4),1,uint8(ndz(4)))]';
+end
+            %}
+            
+            
+            %% iteration of Gl. 4.1 & Gl. 4.2 & auxiliary heater for each node
+            
+            ksi5 = zeros(4,1);
+            ksi5(mdoth > 0) = 1;
+            ksi6 = ~ksi5; %ksi5 = 0 für negtive WT-Massenströme, ksi6 = 0 für positive WT-Massenströme
+            ksi5(mdoth == 0) = 0;
+            ksi6(mdoth == 0) = 0;
+            
+            nodevect = zeros(Nmax,1); nodevect([mm1, mm4]) = 1;
+            rest = find(nodevect==0);
+            Th14(rest) = Tz(rest); %Gleichsetzen mit Speichertemperatur, damit deltaT = 0
+            nodevect = zeros(Nmax,1); nodevect([mm2, mm3]) = 1;
+            rest = find(nodevect==0);
+            Th23(rest) = Tz(rest);
+            
+            if ini
+                Qlsx = zeros(Nmax,1); %Verluste Speicher-Umgebung
+                Qh14_s = zeros(Nmax,1); %Wärmefluss HX1/4-Speicher
+                Qh23_s = Qh14_s; %Wärmefluss HX2/3-Speicher
+                Qlbot = 0; %Verluste Speicherboden
+                Qltop = 0; %Verluste Speicherdeckel
+            else
+                Qlsx = storedat.Qlsx;
+                Qh14_s = storedat.Qh14_s;
+                Qh23_s = storedat.Qh23_s;
+                Qlbot = storedat.Qlbot;
+                Qltop = storedat.Qltop;
+                Th14 = storedat.Th14;
+                Th23 = storedat.Th23;
+            end
+            %mdotd = abs(mdotd);
+            
+            %% Solver-Anwendung
+            allTs = [Tz; Th14; Th23; Qlsx; Qh14_s; Qh23_s; Qlbot; Qltop; Paux];
+            
+            options = odeset('AbsTol',0.1); %Ändern der absoluten Fehlertoleranz auf 0,1
+            [~,dT] = solver(@tempsolver,[0 delt], allTs, options);
+            
+            
+            %% % für AUTOMATISCHE SOLVER-AUSWAHL diesen Abschnitt aktivieren
+            %{
+
+if sum(isnan(mdoth)) == 0 && aux.var ~= 2 %es werden nur Doppelports (oder Heizstab variabler Leistung) verwendet
+    [t,dT] = ode23(@tempsolver,[0 delt], allTs);
+elseif aux.var ~= 2 %Es werden Doppelports und Wärmetauscher verwendet
+    if delt <= 650
+        [t,dT] = ode23(@tempsolver,[0 delt], allTs);
+    else
+        [t,dT] = ode23tb(@tempsolver,[0 delt], allTs);
+    end
+elseif sum(isnan(mdoth)) == 0 && aux.var == 2 %Es werden Doppelports & Heizstab (konstanter Leistung) verwendet
+    [t,dT] = ode45(@tempsolver,[0 delt], allTs);
+else %Es werden DP, WT und Heizstab konstanter Leistung verwendet
+    if delt < 120
+        [t,dT] = ode45(@tempsolver,[0 delt], allTs);
+    elseif delt >= 120 && delt < 170
+        [t,dT] = ode113(@tempsolver,[0 delt], allTs);
+    else
+        [t,dT] = ode23(@tempsolver,[0 delt], allTs);
+    end
+end
+            %}
+            %%
+            Tz = dT(end,1:Nmax)';
+            Th14 = dT(end,Nmax+1:2*Nmax)';
+            storedat.Th14 = Th14;
+            Th23 = dT(end,2*Nmax+1:3*Nmax)';
+            storedat.Th23 = Th23;
+            
+            %Wärmeströme durch die Wärmetauscher
+            Qh1 = zeros(Nmax,1); Qh2 = Qh1; Qh3 = Qh1; Qh4 = Qh1;
+            Qh1(mm1) = (Vh(1).*cp_h(1).*rho_h)./length(mm1).*Th14(mm1)./delt;
+            Qh2(mm2) = (Vh(2).*cp_h(2).*rho_h)./length(mm2).*Th23(mm2)./delt;
+            Qh3(mm3) = (Vh(3).*cp_h(3).*rho_h)./length(mm3).*Th23(mm3)./delt;
+            Qh4(mm4) = (Vh(4).*cp_h(4).*rho_h)./length(mm4).*Th14(mm4)./delt;
+            %Qh1 = Qh1(Qh1~=0); Qh2 = Qh2(Qh2~=0); Qh3 = Qh3(Qh3~=0); Qh4 = Qh4(Qh4~=0);
+            Qh = [sum(Qh1); sum(Qh2); sum(Qh3); sum(Qh4)];
+            Qh(Qh == 0) = nan;
+            
+            %Qlsx = mean(dT(:,3*Nmax+1:4*Nmax))./delt; Qlsx = Qlsx';
+            Qlsx = dT(end,3*Nmax+1:4*Nmax)'./delt;
+            storedat.Qlsx = Qlsx;
+            %Qh14_s = mean(dT(:,4*Nmax+1:5*Nmax))./delt; Qh14_s = Qh14_s';
+            Qh14_s = dT(end,4*Nmax+1:5*Nmax)'./delt;
+            storedat.Qh14_s = Qh14_s;
+            %Qh23_s = mean(dT(:,5*Nmax+1:6*Nmax))./delt; Qh23_s = Qh23_s';
+            Qh23_s = dT(end,5*Nmax+1:6*Nmax)'./delt;
+            storedat.Qh23_s = Qh23_s;
+            %Qlbot = mean(dT(:,6*Nmax+1))./delt;
+            Qlbot = dT(end,6*Nmax+1)./delt;
+            
+            storedat.Qlbot = Qlbot;
+            %Qltop = mean(dT(:,6*Nmax+2))./delt;
+            Qltop = dT(end,6*Nmax+2)./delt;
+            storedat.Qltop = Qltop;
+            %Qaux = sum(dT(:,6*Nmax+3))./delt;
+            %stag = Qaux./Paux.*length(t);
+            %Qaux = [t', dT(:,6*Nmax+3)'];
+            
+            %Qaux = sum((dT(:,auxpos) >= aux.T).*[0; diff(t)])./sum((dT(:,auxpos) <= aux.T).*[0; diff(t)]).*Paux;
+            %Qaux = mean(dT(:,6*Nmax+3))./delt;
+            Qaux = dT(end,6*Nmax+3)./delt;
+            
+            %Qh14 = (dT(end,Nmax+1:2*Nmax)'./(Vh(1).*rho_h.*cp_h))./delt + abs(storedat.Qh14_s);
+            
+            
+            %% Ermittlung der Ausgangstemperaturen der Doppelports
+            Tdo = nan(size(Tdi));
+            if ~isnan(Tdi(1))
+                set = Tdo;
+                for i = 1:length(set)
+                    set(i) = find(irel_bndr > zdo(i),1)-1;
+                end
+                Tdo = Tz(set);
+            end
+            %% Ausgabe der Wärmeströme
+            Qls = sum(Qlsx)+Qlbot+Qltop; %ges. Wärmeverluste des Speichers
+            if ~isnan(Tdi(1))
+                Qd = abs(mdotd).*cp_s.*(Tdi-Tdo); %Wärmeströme durch die Doppelports
+            else
+                Qd = nan;
+            end
+            %Qh = abs(mdoth).*cp_h.*(Thi-Tho); %Wärmeströme durch die Wärmetauscher
+            %Wärmetauscher 1...4 - Speicher
+            if ~isempty(mm1)
+                Qh1s = sum(Qh14_s(mm1));
+            else
+                Qh1s = nan;
+            end
+            if ~isempty(mm4)
+                Qh4s = sum(Qh14_s(mm4));
+            else
+                Qh4s = nan;
+            end
+            if ~isempty(mm2)
+                Qh2s = sum(Qh23_s(mm2));
+            else
+                Qh2s = nan;
+            end
+            if ~isempty(mm3)
+                Qh3s = sum(Qh23_s(mm3));
+            else
+                Qh3s = nan;
+            end
+            Qhs = [Qh1s; Qh2s; Qh3s; Qh4s];
+            %QhDiff = Qh + Qhs; %Restwärme nach der Speicherbeladung
+            %QhDiff
+            %Qhs
+            %Tho = Thi-Qh./(cp_h.*abs(mdoth));
+            %Q_WT = cp*mdot*(Tein-Taus)
+            
+            %% Extraktion der Ausgangstemperaturen der Wärmetauscher
+            Tho = nan(4,1);
+            Thm = Tho;
+            if ~isempty(mm1)
+                h1nodes(2:end-1) = Th14(mm1);
+                chk = h1nodes ~= Thi(1);
+                if chk(1) == 0
+                    %Tho(1) = h1nodes(end-1);
+                    Tho(1) = Thi(1)-abs(Qhs(1)./(mdoth(1).*cp_h(1)));
+                    h1nodes(end) = Tho(1);
+                else
+                    % Tho(1) = h1nodes(2);
+                    Tho(1) = Thi(1)-abs(Qhs(1)./(mdoth(1).*cp_h(1)));
+                    h1nodes(1) = Tho(1);
+                end
+                Thm(1) = mean(h1nodes);
+                hxdat.h1nodes = h1nodes;
+                %cp_h(1) = storedat.cpw(round(Thm(1)));
+            end
+            if ~isempty(mm2)
+                h2nodes(2:end-1) = Th23(mm2);
+                chk = h2nodes ~= Thi(2);
+                if chk(1) == 0
+                    %Tho(2) = h2nodes(end-1);
+                    Tho(2) = Thi(2)-abs(Qhs(2)./(mdoth(2).*cp_h(2)));
+                    h2nodes(end) = Tho(2);
+                else
+                    %Tho(2) = h2nodes(2);
+                    Tho(2) = Thi(2)-abs(Qhs(2)./(mdoth(2).*cp_h(2)));
+                    h2nodes(1) = Tho(2);
+                end
+                Thm(2) = mean(h2nodes);
+                hxdat.h2nodes = h2nodes;
+                %cp_h(2) = storedat.cpw(round(Thm(2)));
+            end
+            if ~isempty(mm3)
+                h3nodes(2:end-1) = Th23(mm3);
+                chk = h3nodes ~= Thi(3);
+                if chk(1) == 0
+                    %Tho(3) = h3nodes(end-1);
+                    Tho(3) = Thi(3)-abs(Qhs(3)./(mdoth(3).*cp_h(3)));
+                    h3nodes(end) = Tho(3);
+                else
+                    %Tho(3) = h3nodes(2);
+                    Tho(3) = Thi(3)-abs(Qhs(3)./(mdoth(3).*cp_h(3)));
+                    h3nodes(1) = Tho(3);
+                end
+                Thm(3) = mean(h3nodes);
+                hxdat.h3nodes = h3nodes;
+                %cp_h(3) = storedat.cpw(round(Thm(3)));
+            end
+            if ~isempty(mm4)
+                h4nodes(2:end-1) = Th14(mm4);
+                chk = h4nodes ~= Thi(4);
+                if chk(1) == 0
+                    %Tho(4) = h4nodes(end-1);
+                    Tho(4) = Thi(4)-abs(Qhs(4)./(mdoth(4).*cp_h(4)));
+                    h4nodes(end) = Tho(4);
+                else
+                    %Tho(4) = h4nodes(2);
+                    Tho(4) = Thi(4)-abs(Qhs(4)./(mdoth(4).*cp_h(4)));
+                    h4nodes(1) = Tho(4);
+                end
+                Thm(4) = mean(h4nodes);
+                hxdat.h4nodes = h4nodes;
+                %cp_h(4) = storedat.cpw(round(Thm(4)));
+            end
+            %hxdat.cp_h = cp_h;
+            
+            
+            
+            
+            
+            
+            %% Temperatursensoren-Ausgabe + Temperatur an der Stelle des Heizstabes
+            Ts = nan(size(zs));
+            if ~isnan(zs(1))
+                set = Ts;
+                for i = 1:length(zs)
+                    set(i) = find(irel_bndr > zs(i),1)-1;
+                end
+                Ts = Tz(set);
+            end
+            if aux.var ~= 2
+                Taux = Tz(auxpos);
+            else
+                Taux = nan;
+            end
             function Tdot = tempsolver(t, T)
                 % TEMPSOLVER: ODE-solver for the calculation of the temperature changes
                 %             The energy balances can be calculated from this.
@@ -289,7 +793,7 @@ classdef mtype340 < handle
                 % Differences between T_HXin & T_Snode -->
                 dThin_s1 = Thi(1) - T(mm1); dThin_s4 = Thi(4) - T(mm4); dThin_s2 = Thi(2) - T(mm2); dThin_s3 = Thi(3) - T(mm3);
                 % Sums of             ----"----------- -->
-                sThin_s1 = Thi(1) + T(mm1); sThin_s4 = Thi(4) + T(mm4); sThin_s2 = Thi(2) + T(mm2); sThin_s3 = Thi(3) + T(mm3); 
+                sThin_s1 = Thi(1) + T(mm1); sThin_s4 = Thi(4) + T(mm4); sThin_s2 = Thi(2) + T(mm2); sThin_s3 = Thi(3) + T(mm3);
                 % Initializations
                 F14 = zeros(size(ksi3)); F14(mm1) = Fhx(1); F14(mm4) = Fhx(4);
                 dThin_s14 = zeros(size(ksi3)); dThin_s14(mm1) = dThin_s1; dThin_s14(mm4) = dThin_s4;
@@ -321,7 +825,7 @@ classdef mtype340 < handle
                         + ty.lambda .* ty.Aq./ty.Hs .* ty.Nmax .* (T(2) - T(1)) - (ty.UA_a ./ ty.Nmax + ty.UA_u).*(T(1) - Tamb)); % Paux = auxiliary part
                 else
                     Tdot(1) = ty.Nmax ./ (ty.Vs .* ty.rho_s .* ty.cp_s) .* (ty.ksiak(1) .* Paux .* (T(1) <= ty.aux.T) + ty.ksiav(1) .* Paux...
-                        + sum(mdotd(msink(1,:)) .* ty.cp_s .* (ksi2(msink(1,:)) .* (T(1) - T(2))))... 
+                        + sum(mdotd(msink(1,:)) .* ty.cp_s .* (ksi2(msink(1,:)) .* (T(1) - T(2))))...
                         + ksi3(1) .* UA_h14(1) ./ nh14 .* (T(ty.Nmax+1) - T(1)) + ksi4(1) .* UA_h23(1) ./ nh23 .* (T(2.*ty.Nmax+1) - T(1))...
                         + ty.lambda .* ty.Aq ./ ty.Hs .* ty.Nmax .* (T(2) - T(1)) - (ty.UA_a ./ ty.Nmax + ty.UA_u).*(T(1) - Tamb));
                 end
