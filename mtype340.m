@@ -124,9 +124,11 @@ classdef mtype340 < handle
         % e. g. 60 for a time step size of 1 minute
         delt;
     end
+    properties (Hidden, SetAccess = 'protected')
+        Tz; % Nmax x 1 - vector with the temperatures in the zones x = 1..Nmax
+    end
     properties (Hidden, SetAccess = 'protected', GetAccess = 'protected')
         ini = true; % set to false after the initialization of Tz, hxdat, storedat and auxon
-        Tz; % Nmax x 1 - vector with the temperatures in the zones x = 1..Nmax
         hxdat; % Struct containing the relevant information of the heat exchangers
         storedat;  % Struct containing the relevant information of the storage tank
         auxon; % true, when auxiliary heater is turned on or variable power is selected; otherwise false.
@@ -263,9 +265,15 @@ classdef mtype340 < handle
             ty.Qlsx = zeros(ty.Nmax,1); % ambient losses
             ty.Qlbot = 0; % Bottom losses
             ty.Qltop = 0; % Top losses
+            ty.Tz = zeros(ty.Nmax,1);
             % Initialize simulate() inputs
-            ty.Tdi = nan(ty.zdi);
-            
+            disz = size(ty.zdi);
+            ty.Tdi = nan(disz);
+            ty.mdotd = zeros(disz);
+            ty.Thi = nan(4,1);
+            ty.mdoth = nan(4,1);
+            ty.Tamb = 20;
+            ty.Paux = nan;
         end
         
         function ty = simulate(ty, Tdi, mdotd, Thi, mdoth, Tamb, Paux)
@@ -285,15 +293,14 @@ classdef mtype340 < handle
             %       - Paux:     Electrical power of auxiliary heater [W]
             %                   --> NaN if no AUX is used. An efficiency of
             %                   1 is assumed for the AUX in this model.
-            
-            if nargin == 6
+            if nargin == 7
                 ty.Tdi = Tdi;
                 ty.mdotd = mdotd;
                 ty.Thi = Thi;
                 ty.mdoth = mdoth;
                 ty.Tamb = Tamb;
                 ty.Paux = Paux;
-            elseif nargin == 0
+            elseif nargin == 1
                 Tdi = ty.Tdi;
                 mdotd = ty.mdotd;
                 Thi = ty.Thi;
