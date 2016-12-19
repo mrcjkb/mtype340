@@ -12,7 +12,7 @@ classdef mtype340 < handle
     % For the purpose of simplification of the use, some of the input
     % arguments are set as constant properties in this model.
     %
-    % Author:   Marc Jakobi, 2016
+    % Author:   Marc Jakobi, December 2016
     
     properties
         % Function handle for the ODE solver to be used. The
@@ -43,7 +43,6 @@ classdef mtype340 < handle
         solver;
         %   Struct with the following fields:
         %       - aux.var = 1 for variable power, 0 for constant power
-        %                   Leistung anhand eines Reglers, 2 wenn Heizstab nicht verwendet
         %       - aux.pos = Relative height of the auxialiary heater -> 0 < aux.pos < 1
         %       - aux.T = Set temperature [°C] for the controller (in the case of constant power) 
         %                 [No dead-band temperatrue difference is set in this case]
@@ -96,6 +95,9 @@ classdef mtype340 < handle
         %       --> If one of the 4 possible HX is not used, set the
         %           respective positions zhi(i) and zho(i) to a negative value
         zho;
+        % 4x1-vector with the volumina [m³] of the four HX
+        % (zero for unused HX)
+        Vh;
         % Time step size of the simulation [s]
         % e. g. 60 for a time step size of 1 minute
         delt; 
@@ -148,11 +150,89 @@ classdef mtype340 < handle
     
     methods
         % Constructor
-        function t = mtype340(solver, Hs, Vs, UA_a, UA_u, UA_o, UA_h, Nmax, zdi, zdo, scdp, aux, zhi, zho, Vh, zs, delt)
-            t.Hs = Hs;
-            t.Vs = Vs;
-            t.Aq = Vs./Hs;
+        function t = mtype340(Hs, Vs, UA_a, UA_u, UA_o, UA_h, zdi, zdo, scdp, aux, zhi, zho, Vh, zs, delt, varargin)
+            %MTYPE340: Initiates a model of a thermal storage tank based on the "MULTIPORT Store-Model" Type 340 (TRNSYS) 
+            %          by H. Drueck
+            %
+            %   Syntax: s = mtype340(Hs, Vs, UA_a, UA_u, UA_o, UA_h, ...
+            %                       zdi, zdo, scdp, aux, zhi, zho, Vh, zs, delt);
+            %
+            %           s = mtype340(Hs, Vs, UA_a, UA_u, UA_o, UA_h, ...
+            %                       zdi, zdo, scdp, aux, zhi, zho, Vh, zs, delt, ...
+            %                       'OptionName', 'OptionValue');
+            %
+            %   Input arguments:
+            %
+            %   Hs:     Height [m] of the storage tank
+            %   Vs:     Volume [m³] of the storage tank
+            %   UA_a:   Nominal heat loss rate [W/K] of the storage tank
+            %   UA_u:   Heat loss rate at the bottom of the storage tank [W/K]
+            %   UA_o:   Heat loss rate at the top of the storage tank [W/K]
+            %   UA_h:   Heat loss rates between storage tank and heat exchangers [W/K] (4x1-vector)
+            %   zdi:    Relative heights of the outputs of double port 1..N (Nx1-vector, zdo(i) <= 1)
+            %           (N is the number of double ports)
+            %   zdo:    Relative heights of the outputs of double port 1..N (Nx1-vector, zdo(i) <= 1)
+            %   scdp:   Nx1-vector according to zdi & zdo to indicate stratified charging and non-stratified charging.
+            %           scdp(i) == 1 for stratified charging of the double port dp_i and
+            %           scdp(i) == 0 for non-stratified charging with fixed return flow positions.
+            %           If no double ports are used, set scdp(1:4) to NaN.
+            %   aux:    Struct with the following fields:
+            %           - aux.var = 1 for variable power, 0 for constant power
+            %           - aux.pos = Relative height of the auxialiary heater -> 0 < aux.pos < 1
+            %           - aux.T = Set temperature [°C] for the controller (in the case of constant power) 
+            %                 [No dead-band temperatrue difference is set in this case]
+            %   zhi:    4x1-vector with the relative heights of the HX-outputs of HX 1..4 [0 <= zho(i) <= 1]
+            %       --> If one of the 4 possible HX is not used, set the
+            %           respective positions zhi(i) and zho(i) to a negative value
+            %   zho:    4x1-vector with the relative heights of the HX-outputs of HX 1..4 [0 <= zho(i) <= 1]
+            %       --> If one of the 4 possible HX is not used, set the
+            %           respective positions zhi(i) and zho(i) to a negative value
+            %   Vh:     4x1-vector with the volumina [m³] of the four HX
+            %           (zero for unused HX)
+            %   zs:     Kx1 vector with the relative positions of up to Nmax temperature sensors (NaN for sensors that are not used)
+            %   delt:   Time step size of the simulation [s]
+            %           e. g. 60 for a time step size of 1 minute
+            %
+            %
+            %   Optional inputs ('OptionName', 'OptionValue' pairs)
+            %
+            %   'Nmax'   Number of volume segments in the storage tank
+            %            (default: 10)
+            %   'Solver' Function handle for the ODE-solver 
+            %            (default: @ode23)
+            
+            % optional inputs
+            p = inputParser;
+            addOptional(p, 'Solver', @ode23)
+            addOptional(p, 'Nmax', 10, @(x) isnumeric(x) & round(x) == x & floor(x) == x)
+            parse(p, varargin{:})
+            t.solver = p.Results.Solver;
+            t.Nmax = p.Results.Nmax;
+            if ~any([isequal(t.solver, @ode23); ...
+                    isequal(t.solver, @ode45); ...
+                    isequal(t.solver, @ode23tb); ...
+                    isequal(t.solver, @ode113)])
+                error('The solver must be one of the following: @ode23, @ode23tb, @ode45 or @ode113')
+            end
+            t.zdi = zdi; t.zdo = zdo; t.scdp = scdp;
+            chk = isnan(zdi) + isnan(zdo) + isnan(scdp);
+            if any(chk < 3 & chk > 0)
+                error('zdi, zdo and scdp do not match')
+            end
+            if any([zdi > 1; zdo > 1; zdi < 0; zdo < 0])
+                error('zdi and zdo must be between 0..1')
+            end
+            chk = zhi == 0 + zho == 0;
+            if any(chk < 2 & chk > 0)
+                error('zhi and zho do not match')
+            end
+            t.zhi = zhi; t.zho = zho;
+            t.Hs = Hs; t.Vs = Vs; t.Aq = Vs./Hs;
             t.Nmax = Nmax;
+            t.UA_a = UA_a; t.UA_u = UA_u; t.UA_o = UA_o; t.UA_h = UA_h;
+            t.aux = aux; t.zhi = zhi; t.zho = zho;
+            t.Vh = Vh; t.zs = zs; t.delt = delt;
+            % Additional properties
             t.ksiak = zeros(Nmax,1); 
             t.ksiav = ksiak;
             t.auxpos = int32(ksiak);
