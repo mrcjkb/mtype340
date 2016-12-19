@@ -75,6 +75,23 @@ classdef mtype340 < handle
         % 4x1-vector with the volumina [m³] of the four HX
         % (zero for unused HX)
         Vh;
+        % Nx1-vector with the input temperatures of the N used double ports [°C]
+        %       --> NaN for unused double ports
+        Tdi;
+        % Nx1-vector with the mass flow rates of the N used double ports [kg/s]
+        %       --> [according to zdi & zdo] (positive values)
+        mdotd;
+        %   4x1-vector with the input temperatures of the heat exchangers [°C]
+        %       --> NaN for unused heat exchangers
+        Thi;   
+        % 4x1-vector with the mass flow rates of the heat exchangers [kg/s]
+        %       --> NaN for unused heat exchangers
+        mdoth;    
+        Tamb; % Ambient temperature [°C]
+        % Electrical power of auxiliary heater [W]
+        %       --> NaN if no AUX is used.
+        %           An efficiency of 1 is assumed for the AUX in this model.
+        Paux; 
     end
     properties (SetAccess = 'protected')
         Tho; % 4x1 vector with the temperatures of the heat exchangers [°C]
@@ -246,6 +263,9 @@ classdef mtype340 < handle
             ty.Qlsx = zeros(ty.Nmax,1); % ambient losses
             ty.Qlbot = 0; % Bottom losses
             ty.Qltop = 0; % Top losses
+            % Initialize simulate() inputs
+            ty.Tdi = nan(ty.zdi);
+            
         end
         
         function ty = simulate(ty, Tdi, mdotd, Thi, mdoth, Tamb, Paux)
