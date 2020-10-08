@@ -5,7 +5,7 @@
 
 
 %% fixed inputs:
-Vs = 1.25; % [m�] -> 1250 litre tank
+Vs = 1.25; % [m2] -> 1250 litre tank
 Hs = 1.7; % [m] height of storage tank
 UA_a = 4.2691; % heat loss rates of the zones 1..4 [W/K]
 UA_u = 0.333; % heat loss rate bottom [W/K]
@@ -16,7 +16,7 @@ zs = linspace(0.05,0.95,10); % 10 temperature sensors (relative positions)
 aux.var = 2; Paux = nan; % no auxiliary heater
 delt = 5; %60;%300;%300; % time step size [s]
 nsth = 3600./delt; % Number of passes per hour
-Tamb = 15; % ambient temperature [�C]
+Tamb = 15; % ambient temperature [C]
 scdp = 1; % stratified charging
 Nmax = 10; % number of nodes
 
@@ -24,8 +24,8 @@ Nmax = 10; % number of nodes
 % double ports
 zdi = 0.05; % Charging from below (relative position)
 zdo = 0.04; % rel. position of the DP output
-% Tdi = 90; %DP-input temperature [�C]
-Tz = 15.*ones(Nmax,1); % Start: 15 �C in the whole storage tank
+% Tdi = 90; %DP-input temperature [C]
+Tz = 15.*ones(Nmax,1); % Start: 15 C in the whole storage tank
 
 %% Initialize mtype340 object
 ty = mtype340(Hs, Vs, UA_a, UA_u, UA_o, UA_h, zdi, zdo, scdp, aux, zhi, zho, Vh, zs, delt);
@@ -38,22 +38,22 @@ SOC = nan(1,14.*nsth-1);
 SOC(1) = (mean(Tz)-15)./75.*100;
 Qout = zeros(1,14.*nsth-1);
 eta = Qout; eta(1) = 1;
-mdots = zeros(1,15.*nsth-1); %Massenstr�me
+mdots = zeros(1,15.*nsth-1); %Massenstroeme
 mmdots = zeros(1,6);%mittlerer Massenstrom bei jedem Abschnitt
 Qloss = zeros(size(SOC));
 Qinput = Qloss;
 
 
 %% [1] Heating to stand-by temperature, 30 kW, 1 hour
-%Assumption DP-output. Tdo = 15 �C
+%Assumption DP-output. Tdo = 15 C
 %with cpw = 4179,5 Ws/(kg*K)
 cpw = 4179.5;
 Qin = 30000; %Input-power [W]
 
 % Set properties
-ty.Tdi = 90; % DP-input temperature [�C]
+ty.Tdi = 90; % DP-input temperature [C]
 ty.mdotd = -Qin./(cpw.*(ty.Tdi-15)); % mass flow rate [kg/s]
-ty.Tamb = 15; % ambient temperature [�C]
+ty.Tamb = 15; % ambient temperature [C]
 
 % Initialize simulation
 ty.simulate;
@@ -156,7 +156,7 @@ ty.Tdi = 15;
 ty.zdo = 0.95;
 ty.aux.var = 0; % constant auxiliary heater AUX power according to controller
 ty.aux.pos = 0.55; % relative height of AUX (6th node)
-ty.aux.T = 60; % Minimum temperature of 60 �C at respective position
+ty.aux.T = 60; % Minimum temperature of 60 C at respective position
 ty.aux.var = 2;
 ty.Paux = 0;
 % Backup heating with heat exchangers
@@ -185,7 +185,7 @@ plot(t(1:10.5*nsth-1),Tmat(:,1:10.5*nsth-1)'); hold on
 
 %% [6] Discharging with 15 kW and securing the stand-by temperature, 3.5 hours
 Qin = -15000;
-ty.zdo = 0.75; % Withdrawal of water - 60�C
+ty.zdo = 0.75; % Withdrawal of water - 60C
 %ty.zdo = 0.95; % water withdrawal (as hot as possible)
 
 % % Back-up heating with auxiliary heater
@@ -193,7 +193,7 @@ ty.zdo = 0.75; % Withdrawal of water - 60�C
 % %ty.aux.pos = 0.65; % AUX in 7th node
 % %ty.Paux = 0;
 % ty.Paux = 15000;
-% ty.aux.T = 60; % AUX control temperature: 60 �C
+% ty.aux.T = 60; % AUX control temperature: 60 C
 
 % Back-up heating with heat exchangers
 ty.zhi(1) = 0.75;
@@ -250,7 +250,7 @@ legend('\vartheta_{top}','\vartheta_9','\vartheta_8','\vartheta_7',...
 lh=findall(gcf,'tag','legend');
 set(lh,'location','northeastoutside');
 xlabel('time in h')
-ylabel('Temperature in �C and SOC in %')
+ylabel('Temperature in C and SOC in %')
 hold on
 y = get(gca,'ylim');
 plot([1,1],y,'k'); hold on

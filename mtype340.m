@@ -49,7 +49,7 @@ classdef mtype340 < handle
         %   Struct with the following fields:
         %       - aux.var = 1 for variable power, 0 for constant power
         %       - aux.pos = Relative height of the auxialiary heater -> 0 < aux.pos < 1
-        %       - aux.T = Set temperature [�C] for the controller (in the case of constant power)
+        %       - aux.T = Set temperature [C] for the controller (in the case of constant power)
         %                 [No dead-band temperatrue difference is set in this case]
         aux;
         zs; % Kx1 vector with the relative positions of up to Nmax temperature sensors (NaN for sensors that are not used)
@@ -72,45 +72,45 @@ classdef mtype340 < handle
         %       --> If one of the 4 possible HX is not used, set the
         %           respective positions zhi(i) and zho(i) to a negative value
         zho;
-        % 4x1-vector with the volumina [m�] of the four HX
+        % 4x1-vector with the volumina [m2] of the four HX
         % (zero for unused HX)
         Vh;
-        % Nx1-vector with the input temperatures of the N used double ports [�C]
+        % Nx1-vector with the input temperatures of the N used double ports [C]
         %       --> NaN for unused double ports
         Tdi;
         % Nx1-vector with the mass flow rates of the N used double ports [kg/s]
         %       --> [according to zdi & zdo] (positive values)
         mdotd;
-        %   4x1-vector with the input temperatures of the heat exchangers [�C]
+        %   4x1-vector with the input temperatures of the heat exchangers [C]
         %       --> NaN for unused heat exchangers
         Thi;   
         % 4x1-vector with the mass flow rates of the heat exchangers [kg/s]
         %       --> NaN for unused heat exchangers
         mdoth;    
-        Tamb; % Ambient temperature [�C]
+        Tamb; % Ambient temperature [C]
         % Electrical power of auxiliary heater [W]
         %       --> NaN if no AUX is used.
         %           An efficiency of 1 is assumed for the AUX in this model.
         Paux;
-        Tho; % 4x1 vector with the temperatures of the heat exchangers [�C]
+        Tho; % 4x1 vector with the temperatures of the heat exchangers [C]
         Qls; % Heat loss of the entire storage tank to the ambience [W]
         Qlbot; % Heat loss of the storage floor to the ambience [W]
         Qltop; % Heat loss of the storage lid to the ambience [W]
         Qlsx; % Nmax x 1 - vector with the ambient heat losses ofthe Nmax volume segments [W]
-        Tdo; % Nx1 -  vector with the temperatures of the N double ports [�C]
+        Tdo; % Nx1 -  vector with the temperatures of the N double ports [C]
         Qd; % Nx1 - vector with the heat flows through the N double ports [W]
-        Ts; % Ox1 - vector with the temperatures at the O temperature sensor positions [�C]
-        Taux; % Temperature at the position of the temperature controller [�C] (Taux = NaN, if aux(1) == 1)
+        Ts; % Ox1 - vector with the temperatures at the O temperature sensor positions [C]
+        Taux; % Temperature at the position of the temperature controller [C] (Taux = NaN, if aux(1) == 1)
         Qh; % 4x1 - vector with the thermal output through the M heat exchangers [W] (NaN for unused HX)
         Qhs; % 4x1 - vector with the thermal output between the M heat exchangers [W] (NaN for unused HX)
-        Thm; % 4x1 - vector with the mean temperatures of the M heat exchangers [�C] (NaN for unused HX)
+        Thm; % 4x1 - vector with the mean temperatures of the M heat exchangers [C] (NaN for unused HX)
         % Utilized auxiliary power [W, el.]
         % (can be lower than the set power for aux.var == 0 if the
         %  auxiliary heater is repeatedly turned on and off)
         Qaux;
-        Aq; % Cross-section area [m�] of the storage tank
+        Aq; % Cross-section area [m2] of the storage tank
         Hs; % Height [m] of the storage tank
-        Vs; % Volume [m�] of the storage tank
+        Vs; % Volume [m2] of the storage tank
         UA_a; % Nominal heat loss rate [W/K] of the storage tank
         UA_u; % Heat loss rate at the bottom of the storage tank [W/K]
         UA_o; % Heat loss rate at the top of the storage tank [W/K]
@@ -133,9 +133,9 @@ classdef mtype340 < handle
         auxpos;
     end
     properties (Hidden, Constant)
-        cp_s = 4179.5; % Specific heat capacity of water at 40 �C (mean storage tank temperature) [Ws/(kg*K)] (= 4.1795 kJ/(kg*K))
+        cp_s = 4179.5; % Specific heat capacity of water at 40 C (mean storage tank temperature) [Ws/(kg*K)] (= 4.1795 kJ/(kg*K))
         cp_h = [4179.5; 4179.5; 4179.5; 4179.5]; % Specific heat capacity of water in the heat exchangers
-        rho_s = 992.21; % Density of water at 40 �C [kg/m�]
+        rho_s = 992.21; % Density of water at 40 C [kg/m2]
         % lambda_eff is determined via an experimental approach and varies
         % only slightly depending on the storage tank type and its
         % operation.
@@ -144,11 +144,11 @@ classdef mtype340 < handle
         % 1.52 W/mK was chosen.
         % SOURCES:
         %         - Bundesverband Solarwirtschaft e.V. - Mitarbeit der deutschen
-        %           Solarindustrie bei der �berarbeitung der europ�ischen Normen f�r
+        %           Solarindustrie bei der Ueberarbeitung der europaeischen Normen fuer
         %           thermische Solaranlagen (Eurosol) [Tabelle 4.2]
-        %         - H. Dr�ck, E. Hahne - Kombispeicher auf dem Pr�fstand [Tabelle 1]
+        %         - H. DrCk, E. Hahne - Kombispeicher auf dem Pruefstand [Tabelle 1]
         lambda = 1.52; % (5.46 kJ/(m*h*K))
-        rho_h = 992.21; % Density of the fluid (water) in the heat exchangers [kg/m�] (Drinking water is assumed here)
+        rho_h = 992.21; % Density of the fluid (water) in the heat exchangers [kg/m2] (Drinking water is assumed here)
         %Parameters
         % according to eq. 2.2 ("Heat transfer capacity rate (UA)*hx", p. 6 of the MULTIPORT Store-Model documentation
         %b1: Dependence of the heat loss rate between the HX and the
@@ -158,7 +158,7 @@ classdef mtype340 < handle
         %    (can be neglected - Drueck, Bachmann, Mueller-Steinhagen:
         %      Testing of solar hot water stores by means of up- and down-scaling algorithms)
         %b3: Dependence of the WVR_HX,s on the mean temperature of the HX
-        %b3: Abh�ngigkeit der WVR_WT,s von der mittleren Temperatur des WT
+        %b3: Abhaengigkeit der WVR_WT,s von der mittleren Temperatur des WT
         %Mean values of the above journal article's determined values were chosen for b1 and b3
         %(b1 varies between 0.205 and 0.266 and b3 varies between 0.413 and
         %0.473 for volumes between 300 and 500 l).
@@ -184,7 +184,7 @@ classdef mtype340 < handle
             %   Input arguments:
             %
             %   Hs:     Height [m] of the storage tank
-            %   Vs:     Volume [m�] of the storage tank
+            %   Vs:     Volume [m2] of the storage tank
             %   UA_a:   Nominal heat loss rate [W/K] of the storage tank
             %   UA_u:   Heat loss rate at the bottom of the storage tank [W/K]
             %   UA_o:   Heat loss rate at the top of the storage tank [W/K]
@@ -199,7 +199,7 @@ classdef mtype340 < handle
             %   aux:    Struct with the following fields:
             %           - aux.var = 1 for variable power, 0 for constant power
             %           - aux.pos = Relative height of the auxialiary heater -> 0 < aux.pos < 1
-            %           - aux.T = Set temperature [�C] for the controller (in the case of constant power)
+            %           - aux.T = Set temperature [C] for the controller (in the case of constant power)
             %                 [No dead-band temperatrue difference is set in this case]
             %   zhi:    4x1-vector with the relative heights of the HX-outputs of HX 1..4 [0 <= zho(i) <= 1]
             %       --> If one of the 4 possible HX is not used, set the
@@ -207,7 +207,7 @@ classdef mtype340 < handle
             %   zho:    4x1-vector with the relative heights of the HX-outputs of HX 1..4 [0 <= zho(i) <= 1]
             %       --> If one of the 4 possible HX is not used, set the
             %           respective positions zhi(i) and zho(i) to a negative value
-            %   Vh:     4x1-vector with the volumina [m�] of the four HX
+            %   Vh:     4x1-vector with the volumina [m2] of the four HX
             %           (zero for unused HX)
             %   zs:     Kx1 vector with the relative positions of up to Nmax temperature sensors (NaN for sensors that are not used)
             %   delt:   Time step size of the simulation [s]
@@ -277,15 +277,15 @@ classdef mtype340 < handle
             %
             % Input arguments:
             %
-            %       - Tdi:      Nx1-vector with the input temperatures of the N used double ports [�C]
+            %       - Tdi:      Nx1-vector with the input temperatures of the N used double ports [C]
             %                   --> NaN for unused double ports
             %       - mdotd:    Nx1-vector with the mass flow rates of the N used double ports [kg/s]
             %                   --> [according to zdi & zdo] (positive values)
-            %       - Thi:      4x1-vector with the input temperatures of the heat exchangers [�C]
+            %       - Thi:      4x1-vector with the input temperatures of the heat exchangers [C]
             %                   --> NaN for unused heat exchangers
             %       - mdoth:    4x1-vector with the mass flow rates of the heat exchangers [kg/s]
             %                   --> NaN for unused heat exchangers
-            %       - Tamb:     Ambient temperature [�C]
+            %       - Tamb:     Ambient temperature [C]
             %       - Paux:     Electrical power of auxiliary heater [W]
             %                   --> NaN if no AUX is used. An efficiency of
             %                   1 is assumed for the AUX in this model.
@@ -357,7 +357,7 @@ classdef mtype340 < handle
             ksi1 = true(size(mdotd)); ksi1(mdotd<=0) = 0;
             % ksi2 = 1 for mdot_dp < 0, otherwise ksi2 = 0
             ksi2 = true(size(mdotd)); ksi2(mdotd>=0) = 0;
-            % ksi3 = 1 f�r zones i, that are in contact with HX 1 oder 4 sind,
+            % ksi3 = 1 for zones i, that are in contact with HX 1 oder 4 sind,
             % otherwise ksi3 = 0
             if ty.ini || ty.hxdat.nh14 ~= length(find([ty.zho(1),ty.zho(4)]>=0)) || ty.hxdat.nh23 ~= length(find([ty.zho(2),ty.zho(3)]>=0))
                 % Find out if hx1 & hx4 are used alone, together or not at all
