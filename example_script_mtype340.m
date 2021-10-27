@@ -28,7 +28,7 @@ zdo = 0.04; % rel. position of the DP output
 Tz = 15.*ones(Nmax,1); % Start: 15 C in the whole storage tank
 
 %% Initialize mtype340 object
-ty = mtype340(Hs, Vs, UA_a, UA_u, UA_o, UA_h, zdi, zdo, scdp, aux, zhi, zho, Vh, zs, delt);
+ty = mtype340(Hs, Vs, UA_a, UA_u, UA_o, UA_h, zdi, zdo, scdp, aux, zhi, zho, Vh, zs, delt, 'Nmax', Nmax);
 
 
 % Init temperature-matrix
