@@ -1,5 +1,8 @@
 # mtype340
 
+>Since I no longer use Matlab, I cannot actively maintain this model.
+>I will continue to accept PRs, as long as I can verify them without Matlab.
+
 [![View mtype340 on File Exchange](https://www.mathworks.com/matlabcentral/images/matlab-file-exchange.svg)](https://ch.mathworks.com/matlabcentral/fileexchange/60822-mtype340)
 
 Model of a thermal storage tank based on the TRNSYS "MULTIPORT Store-Model" Type 340 by H. Drueck
